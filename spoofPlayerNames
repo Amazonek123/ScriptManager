@@ -1,0 +1,115 @@
+local spoofRegistry = {}
+local spoofedConnections = {}
+local PlayerService = game:GetService("Players")
+local LocalPlr = PlayerService.LocalPlayer
+
+local function disconnectConnections(obj)
+    if spoofedConnections[obj] then
+        for _, conn in pairs(spoofedConnections[obj]) do
+            pcall(function()
+                conn:Disconnect()
+            end)
+        end
+        spoofedConnections[obj] = nil
+    end
+end
+
+local function spoofUIElement(uiObj, realName, spoofName)
+    if not uiObj:IsA("TextLabel") and not uiObj:IsA("TextButton") then return end
+    if not string.find(uiObj.Text, realName) then return end
+
+    if not rawget(spoofRegistry, uiObj) then
+        table.insert(spoofRegistry, uiObj)
+    end
+
+    disconnectConnections(uiObj)
+
+    spoofedConnections[uiObj] = {}
+
+    for _, conn in ipairs(getconnections(uiObj:GetPropertyChangedSignal("Text"))) do
+        conn:Disable()
+        table.insert(spoofedConnections[uiObj], conn)
+    end
+    for _, conn in ipairs(getconnections(uiObj.Changed)) do
+        conn:Disable()
+        table.insert(spoofedConnections[uiObj], conn)
+    end
+
+    uiObj.Text = string.gsub(uiObj.Text, realName, spoofName)
+
+    local textConn = uiObj:GetPropertyChangedSignal("Text"):Connect(function()
+        if string.find(uiObj.Text, realName) then
+            uiObj.Text = string.gsub(uiObj.Text, realName, spoofName)
+        end
+    end)
+
+    table.insert(spoofedConnections[uiObj], textConn)
+end
+
+local function disguisePlayerUI(targetPlayer)
+    local userId = PlayerService:GetUserIdFromNameAsync(targetPlayer.Name)
+    local aliasName = (targetPlayer.Name == LocalPlr.Name) and "WrapGate_User" or "WrapGate_"..math.random(1, 10000)
+
+    local count = 0
+    for _, desc in ipairs(game:GetDescendants()) do
+        spoofUIElement(desc, targetPlayer.Name, aliasName)
+        count += 1
+        if count % 20 == 0 then
+            task.wait()
+        end
+    end
+
+    game.DescendantAdded:Connect(function(newObj)
+        task.wait(0.05)
+        spoofUIElement(newObj, targetPlayer.Name, aliasName)
+    end)
+end
+
+local function hookMeta()
+    local meta = getrawmetatable(game)
+    local oldIndex = meta.__index
+    local oldNewIndex = meta.__newindex
+
+    if setreadonly then setreadonly(meta, false) else make_writeable(meta) end
+
+    meta.__index = newcclosure(function(self, key)
+        if not checkcaller() and rawget(spoofRegistry, self) then
+            if key == "Text" then
+                return LocalPlr.Name
+            elseif key == "Image" then
+                local val = oldIndex(self, key)
+                return string.gsub(string.gsub(val, tostring(LocalPlr.UserId), exploiterId), LocalPlr.Name, getgenv().ExploiterName)
+            end
+        end
+        return oldIndex(self, key)
+    end)
+
+    meta.__newindex = newcclosure(function(self, key, val)
+        if (game.IsA(self, "TextLabel") or game.IsA(self, "TextButton")) and key == "Text" and string.find(val, LocalPlr.Name) then
+            if not rawget(spoofRegistry, self) then
+                table.insert(spoofRegistry, self)
+            end
+            return oldNewIndex(self, key, string.gsub(val, LocalPlr.Name, "WrapGate_User"))
+        end
+        return oldNewIndex(self, key, val)
+    end)
+
+    if setreadonly then setreadonly(meta, true) else make_readonly(meta) end
+end
+
+hookMeta()
+
+task.defer(function()
+    for _, plr in ipairs(PlayerService:GetPlayers()) do
+        task.spawn(function()
+            disguisePlayerUI(plr)
+        end)
+        task.wait(0.1)
+    end
+end)
+
+PlayerService.PlayerAdded:Connect(function(plr)
+    task.spawn(function()
+        disguisePlayerUI(plr)
+    end)
+end)
